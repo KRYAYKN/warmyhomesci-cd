@@ -70,7 +70,7 @@ pipeline {
         stage('Wait Nginx Ingress Controller Install') {
             steps {
                 echo 'Ingress Install'
-                sh '. ./Warmy-Homes-Turkey/wait.sh' 
+                sh '. ./warmyhomesci-cd/wait.sh' 
 
             }
         }   
@@ -78,13 +78,13 @@ pipeline {
             steps {
                 echo 'Warmy Homes Deploying'
                 sh """
-                  envsubst < Warmy-Homes-Turkey/warmy-chart/values-template.yaml > Warmy-Homes-Turkey/warmy-chart/values.yaml
-                  sed -i s/HELM_VERSION/${BUILD_NUMBER}/ Warmy-Homes-Turkey/warmy-chart/Chart.yaml
+                  envsubst < warmyhomesci-cd/warmy-chart/values-template.yaml > warmyhomesci-cd/warmy-chart/values.yaml
+                  sed -i s/HELM_VERSION/${BUILD_NUMBER}/ warmyhomesci-cd/warmy-chart/Chart.yaml
                   helm plugin list | grep -q "s3" || helm plugin install https://github.com/hypnoglow/helm-s3.git
                   aws s3 ls s3://warmy-bucket/stable/myapp/index.yaml || helm s3 init s3://warmy-bucket/stable/myapp
                   helm repo add warmy-app s3://warmy-bucket/stable/myapp/ || echo "repository name already exists"
                   helm repo update
-                  helm package Warmy-Homes-Turkey/warmy-chart
+                  helm package warmyhomesci-cd/warmy-chart
                   helm s3 push --force warmy-chart-${BUILD_NUMBER}.tgz warmy-app
                   helm repo update
                   helm upgrade --install \
@@ -101,7 +101,7 @@ pipeline {
                   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
                   helm repo update
                   helm upgrade --install kubeprostack --namespace monitoring prometheus-community/kube-prometheus-stack
-                  kubectl apply -f Warmy-Homes-Turkey/prometheus-grafana/ingress.yaml
+                  kubectl apply -f warmyhomesci-cd/prometheus-grafana/ingress.yaml
                 """
              }
         }
