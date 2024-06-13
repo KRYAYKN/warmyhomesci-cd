@@ -29,7 +29,7 @@ spec:
               value: password
             - name: POSTGRES_USER
               value: dev_user
-          image: postgres
+          image: {{ .Values.IMAGE_TAG_DB }}
           name: postgres
           ports:
             - containerPort: 5432

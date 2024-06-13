@@ -1,0 +1,139 @@
+pipeline {
+    agent any
+    environment {
+        AWS_REGION= "us-east-1"
+        DOCKERHUB_USER_NAME= "korayayakin"
+        APP_REPO_NAME="warmy-app"
+        APP_NAME= "Warmy-Homes"
+    }
+
+    stages {      
+        stage('Prepare Tags for Docker Images') {
+            steps {
+                echo 'Preparing Tags for Docker Images'
+                script {
+                    env.IMAGE_TAG_FE = "${DOCKERHUB_USER_NAME}/${APP_REPO_NAME}:frontend-v${BUILD_NUMBER}"
+                    env.IMAGE_TAG_BE = "${DOCKERHUB_USER_NAME}/${APP_REPO_NAME}:backend-v${BUILD_NUMBER}"
+                    env.IMAGE_TAG_DB = "${DOCKERHUB_USER_NAME}/${APP_REPO_NAME}:postgre-v${BUILD_NUMBER}"
+                }
+            }
+        }
+        stage('Build App Docker Images') {
+            steps {
+                echo 'Building App Dev Images'
+                sh """
+                    docker build --force-rm -t "${IMAGE_TAG_FE}" "${WORKSPACE}/Frontend-WarmyHomes"
+                    docker build --force-rm -t "${IMAGE_TAG_BE}" "${WORKSPACE}/Backend-WarmyHomes"
+                    docker build --force-rm -t "${IMAGE_TAG_DB}" "${WORKSPACE}/postgresql"
+                    docker image ls
+                """
+            }
+        }
+
+        stage('Push Images to Docker Hub Repo') {
+            steps {
+                
+                withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                sh """    
+                    echo "Pushing ${APP_NAME} App Images to Docker Hub Repo"
+                    echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+                    docker push "${IMAGE_TAG_FE}"
+                    docker push "${IMAGE_TAG_BE}"
+                    docker push "${IMAGE_TAG_DB}"
+                """
+             }
+          }
+        }
+        stage('Create K8s Objects') {
+            steps {
+                echo 'Creating Kubernetes Objects'
+                sh """ 
+                 kubectl get ns warmy || kubectl create ns warmy
+                 
+                """
+
+            }
+        } 
+
+        stage('Nginx Ingress Controller Install') {
+            steps {
+                echo 'Ingress Install'
+                sh """ 
+                    helm upgrade --install ingress-nginx ingress-nginx \
+                      --repo https://kubernetes.github.io/ingress-nginx \
+                      --namespace ingress-nginx --create-namespace
+                   """
+
+            }
+        }
+        
+        stage('Wait Nginx Ingress Controller Install') {
+            steps {
+                echo 'Ingress Install'
+                sh '. ./Warmy-Homes-Turkey/wait.sh' 
+
+            }
+        }   
+        stage('Deploy Application on EKS') {
+            steps {
+                echo 'Warmy Homes Deploying'
+                sh """
+                  envsubst < Warmy-Homes-Turkey/warmy-chart/values-template.yaml > Warmy-Homes-Turkey/warmy-chart/values.yaml
+                  sed -i s/HELM_VERSION/${BUILD_NUMBER}/ Warmy-Homes-Turkey/warmy-chart/Chart.yaml
+                  helm plugin list | grep -q "s3" || helm plugin install https://github.com/hypnoglow/helm-s3.git
+                  aws s3 ls s3://warmy-bucket/stable/myapp/index.yaml || helm s3 init s3://warmy-bucket/stable/myapp
+                  helm repo add warmy-app s3://warmy-bucket/stable/myapp/ || echo "repository name already exists"
+                  helm repo update
+                  helm package Warmy-Homes-Turkey/warmy-chart
+                  helm s3 push --force warmy-chart-${BUILD_NUMBER}.tgz warmy-app
+                  helm repo update
+                  helm upgrade --install \
+                    warmy-app-release warmy-app/warmy-chart --version ${BUILD_NUMBER} \
+                    --namespace brc
+                """
+             }
+        }
+        stage('Deploy Monitoring tools on EKS') {
+            steps {
+                echo 'Monitoring tools deploying'
+                sh """
+                  kubectl get ns monitoring || kubectl create ns monitoring
+                  helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+                  helm repo update
+                  helm upgrade --install kubeprostack --namespace monitoring prometheus-community/kube-prometheus-stack
+                  kubectl apply -f Warmy-Homes-Turkey/prometheus-grafana/ingress.yaml
+                """
+             }
+        }
+
+        stage('Destroy the infrastructure') {
+            steps {
+                timeout(time: 5, unit: 'DAYS') {
+                    input message: 'Approve terminate'
+                }
+                script {
+                    // Delete application.
+                    sh 'helm uninstall warmy-app-release -n warmy'
+                    // Delete the Ingress controller's.
+                    sh 'helm uninstall ingress-nginx -n ingress-nginx'
+                    // Delete the Monitoring tools.
+                    sh 'helm uninstall kubeprostack -n monitoring'
+                    // Prune all local Docker images
+                    sh 'docker image prune -af'
+                 
+                   
+                }
+            }
+        }
+    
+
+    post {
+        always {
+            echo 'Deleting all local images'
+            sh 'docker image prune -af'
+        }
+
+    }
+ 
+ }
+}

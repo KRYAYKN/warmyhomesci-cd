@@ -35,8 +35,8 @@ spec:
                   key: NEXTAUTH_SECRET
                   name: ui-env
             - name: BASE_URL
-              value: http://warmy.samdevops.link:8080
-          image: techproawsdevopsteam/warmyfrontend
+              value: http://{{ .Values.DNS_NAME }}:8080
+          image: {{ .Values.IMAGE_TAG_FE }}
           name: frontend
           ports:
             - containerPort: 3000
